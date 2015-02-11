@@ -3,12 +3,13 @@ import bottle
 import beaker.middleware
 from bottle import route, redirect, post, run, request, hook
 from instagram import client, subscriptions
+bottle.debug(True)
 
 #python image imports
 from PIL import Image
 import urllib2
 import cStringIO
-bottle.debug(True)
+
 
 #cv2 imports
 import numpy as np
@@ -278,7 +279,7 @@ def tag_search():
         tag_recent_media, next = api.tag_recent_media(tag_name=tag_search[0].name)
         photos = []
         for tag_media in tag_recent_media:
-            #f = cStringIO.StringIO(urllib2.urlopen(tag_media.get_standard_resolution_url()).read())
+            #f = cStringIO.StringIO(urllib2.urllib2(tag_media.get_standard_resolution_url()).read())
             imgURL = tag_media.get_standard_resolution_url()
             LabelFaces(imgURL)
             photos.append('<img src="%s"/>' % tag_media.get_standard_resolution_url())
