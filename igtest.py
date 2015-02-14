@@ -1,30 +1,12 @@
-#instagram imports
+# 1. redis-server --port 6379
+# 2. python igtest.py
+# 3. http://localhost:8515
 import bottle
 import beaker.middleware
 from bottle import route, redirect, post, run, request, hook
 from instagram import client, subscriptions
+
 bottle.debug(True)
-
-#python image imports
-from PIL import Image
-import urllib2
-import cStringIO
-
-
-#cv2 imports
-import numpy as np
-import pandas as pd
-import cv2
-from sklearn import datasets
-import os
-
-#change dirs on these
-face_cascade = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_frontalface_default.xml')
-eye_cascade = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_eye.xml')
-mouth_cascade = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_mcs_mouth.xml')
-nose_cascade = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_mcs_nose.xml')
-smile_cascade = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_smile.xml')
-
 
 session_opts = {
     'session.type': 'file',
