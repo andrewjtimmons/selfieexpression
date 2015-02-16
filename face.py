@@ -10,23 +10,25 @@ from PIL import Image
 import urllib2
 import cStringIO
 
+import time
+import sys 
+import sqlite3
+
 #install CV2 and point these to the local dir
 FACE_CASECADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_frontalface_default.xml')
 EYE_CASECADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_eye.xml')
 MOUTH_CASECADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_mcs_mouth.xml')
 SMILE_CASECADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_smile.xml')
 
-class API_Client():
+class API_call():
   # Makes api calls to instragram. 
-  def __init__(self, lat, lng, min_timestamp, client_id):
+  def __init__(self, lat, lng, max_timestamp, client_id):
     self.lat = lat
     self.lng = lng
-    self.min_timestamp = min_timestamp
+    self.max_timestamp = max_timestamp
     self.client_id = client_id
     self.num_photos = 100
-    self.api_endpoint =  "https://api.instagram.com/v1/media/search?lat=%s&lng=%s&min_timestamp=%s&client_id=%s&count=%s" % (self.lat, self.lng, self.min_timestamp, self.client_id, self.num_photos)
-    
-  def get_data(self):
+    self.api_endpoint =  "https://api.instagram.com/v1/media/search?lat=%s&lng=%s&max_timestamp=%s&client_id=%s&count=%s" % (self.lat, self.lng, self.max_timestamp, self.client_id, self.num_photos)
     self.response =  urllib2.urlopen(self.api_endpoint)
     self.data = json.load(self.response)
 
@@ -34,12 +36,27 @@ class API_Client():
 class Img():
   # Object for each image.
 
-  def __init__(self, url):
-    self.url = url
+  def __init__(self, entry):
+    self.url = entry['images']['standard_resolution']['url']
+    self.low_resolution_url = entry['images']['low_resolution']['url']
+    self.thumbnail_url = entry['images']['thumbnail']['url']
+    self.users_in_photo = entry['users_in_photo']
+    self.tags = entry['tags']
+    self.lat = entry['location']['latitude']
+    self.lng = entry['location']['longitude']
+    self.filter = entry['filter']
+    self.created_time = entry['created_time']
+    self.id = entry['id']
+    self.link = entry['link']
+    self.username = entry['user']['username']
     self.color_image = self._create_opencv_image_from_url()
     self.grayscale_image = self._create_grayscale_image()
     self.faces_rois, self.faces = self._detect_faces()
     self.num_faces = len(self.faces_rois)
+    try:
+      self.caption = entry['caption']['text']
+    except TypeError:
+      self.caption = ""
   
   def _create_opencv_image_from_url(self, cv2_img_flag = 1):
     # Get image from URL and convert to an openCV image.
@@ -53,7 +70,7 @@ class Img():
 
   def _detect_faces(self):
     # Detect faces in the image.  Returns an empty list if no faces.
-    faces = FACE_CASECADE.detectMultiScale(self.grayscale_image, scaleFactor = 1.05, minNeighbors = 5)
+    faces = FACE_CASECADE.detectMultiScale(self.grayscale_image, scaleFactor = 1.05, minNeighbors = 3)
     faces_rois = []
     for (x,y,w,h) in faces:
       self._draw_rectangle(self.color_image, (x,y), (x+w,y+h), (255,0,0))
@@ -117,15 +134,13 @@ class Face():
     x_face, y_face, w_face, h_face = self.face_xywh
     y_eyes = y_face + self.eyes_xywh_relative[0][1] + int(self.eyes_xywh_relative[0][3]*1.5)
     face_bottom = h_face - self.eyes_xywh_relative[0][1] - int(self.eyes_xywh_relative[0][3]*1.5)
-    cv2.line(self.color_image, (0, y_eyes), (300, y_eyes), color = (255,0,255), thickness = 2)
-    cv2.line(self.color_image, (0, y_eyes+face_bottom), (300, y_eyes+face_bottom), color = (255,0,255), thickness = 2)
     roi_gray_below_eyes = self.grayscale_image[y_eyes:y_eyes+face_bottom, x_face:x_face+w_face]
     roi_color_below_eyes = self.color_image[y_eyes:y_eyes+face_bottom, x_face:x_face+w_face]
     return roi_gray_below_eyes, roi_color_below_eyes
 
   def _detect_mouths(self):
     # Detect mouth in the image.  Returns an empty list if no mouth.
-    mouth_xywh_relative = MOUTH_CASECADE.detectMultiScale(self.roi_gray_below_eyes, scaleFactor = 1.05, minNeighbors = 15)
+    mouth_xywh_relative = MOUTH_CASECADE.detectMultiScale(self.roi_gray_below_eyes, scaleFactor = 1.05, minNeighbors = 3)
     mouth_rois = []
     mouth_xywh_absolute = []
     for x,y,w,h in mouth_xywh_relative:
@@ -138,7 +153,7 @@ class Face():
 
   def _detect_smiles(self):
     # Detect mouth in the image.  Returns an empty list if no mouth.
-    smile_xywh_relative = SMILE_CASECADE.detectMultiScale(self.roi_gray_below_eyes, scaleFactor = 1.05, minNeighbors = 15)
+    smile_xywh_relative = SMILE_CASECADE.detectMultiScale(self.roi_gray_below_eyes, scaleFactor = 1.05, minNeighbors = 3)
     smile_rois = []
     smile_xywh_absolute = []
     for x , y, w, h in smile_xywh_relative:
@@ -187,21 +202,76 @@ class Face():
       return True
     return False    
 
+  def has_one_mouth(self):
+    if len(self.mouth_rois) == 1:
+      return True
+    return False
 
-test = API_Client(lat = 40.7359, lng =-73.9903086, min_timestamp = 1423880214, client_id = '')
-test.get_data()
-for i in test.data['data']:
-  if 'videos' not in i:
-    print i['images']['standard_resolution']['url']
-    try:
-      img = Img(i['images']['standard_resolution']['url'])
-      img.show_color_image()
-      for possible_face, face_xywh in zip(img.faces_rois, img.faces):
-        face = Face(img.url, img.color_image, img.grayscale_image, possible_face, face_xywh)
-        if face.has_two_eyes():
-            #face.show_color_image()
-            (x1,x2,y1,y2) = face.eyes_xywh_absolute[1]
-            print (x1,x2,y1,y2)
-            face.show_color_image()
-    except cv2.error:
-      continue
+  def has_zero_or_one_smile(self):
+    if len(self.smile_rois) <= 1:
+      return True
+    return False
+
+def main():
+  num_api_calls = 10
+  calls_made = 0
+  max_timestamp = 1423880214
+  processed_images = set([])
+  t1 = time.time()
+  faces = []
+  while calls_made < num_api_calls:
+    face_count = 0
+    response = API_call(lat = 40.7359, lng =-73.9903086, max_timestamp = max_timestamp, client_id = '')
+    timestamps = []
+    for entry in response.data['data']:
+      if entry['type'] == 'image':
+        #print entry['images']['standard_resolution']['url']
+        try:
+          img = Img(entry)
+          if is_new_image(img.id, processed_images):
+            timestamps.append(img.created_time)
+            #print img.created_time
+            #img.show_color_image()
+            for possible_face, face_xywh in zip(img.faces_rois, img.faces):
+              face = Face(img.url, img.color_image, img.grayscale_image, possible_face, face_xywh)
+              if face.has_two_eyes() and face.has_one_mouth() and face.has_zero_or_one_smile():
+                  #face.show_color_image()
+                  (x1,x2,y1,y2) = face.eyes_xywh_absolute[1]
+                  print (x1,x2,y1,y2)
+                  #face.show_color_image()
+                  face_count +=1
+                  faces.append(img.color_image)
+        except cv2.error:
+          continue    
+    max_timestamp = get_new_max_timestamp(max_timestamp, img.created_time)
+    print str(face_count) + "faces found on loop" + str(calls_made + 1)
+    calls_made += 1
+  print timestamps
+  print len(processed_images)
+  t2 = time.time()
+  print (t2-t1)
+  print "num faces = " + str(len(faces))
+  for f in faces:
+    cv2.imshow('img',f)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+  print 'size' + str(sys.getsizeof(faces))
+
+def is_new_image(image_id, processed_images):
+  # Checks if image has already been processed since instagram api sometimes 
+  # does not respect max_timestamp
+  if image_id in processed_images:
+    return False
+  processed_images.add(image_id)
+  return True
+
+def get_new_max_timestamp(last_max_timestamp, current_image_timestamp):
+  # Gives the smaller of the last max timestamp vs the last image's timestamp.  
+  # Then it subtracts 600 seconds from that.  This is needed because the instagram
+  # API does not always respect max_timestamp and you could get stuck in a loop 
+  # where all photos have a max_timestamp greater than what was set
+  new_max_timestamp = min(last_max_timestamp, current_image_timestamp)
+  return new_max_timestamp - 600
+
+if __name__ == '__main__':
+    main()
