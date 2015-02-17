@@ -14,6 +14,7 @@ import time
 import sys 
 import getopt
 import sqlite3
+import cpickle
 
 #install CV2 and point these to the local dir
 FACE_CASECADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_frontalface_default.xml')
@@ -37,11 +38,14 @@ class API_call():
 class Img():
   # Object for each image.
 
-  def __init__(self, entry):
+  def __init__(self, entry, api_call_lat, api_call_lng):
     self.url = entry['images']['standard_resolution']['url']
     self.low_resolution_url = entry['images']['low_resolution']['url']
     self.thumbnail_url = entry['images']['thumbnail']['url']
-    self.users_in_photo = entry['users_in_photo']
+    if entry['users_in_photo'] != []:
+      self.users_in_photo = entry['users_in_photo']
+    else: 
+      self.users_in_photo = ['']
     self.tags = entry['tags']
     self.lat = entry['location']['latitude']
     self.lng = entry['location']['longitude']
@@ -58,6 +62,8 @@ class Img():
       self.caption = entry['caption']['text']
     except TypeError:
       self.caption = ""
+    self.api_call_lat = api_call_lat
+    self.api_call_lng = api_call_lng
   
   def _create_opencv_image_from_url(self, cv2_img_flag = 1):
     # Get image from URL and convert to an openCV image.
@@ -213,32 +219,44 @@ class Face():
       return True
     return False
 
+
 def main(argv):
-  #explain vars
-  num_api_calls, lat, lng, max_timestamp, client_id = parse_cmd_args(argv)
+  #explain vars/this whole thing
+  num_api_calls, api_call_lat, api_call_lng, max_timestamp, client_id = parse_cmd_args(argv)
   calls_made = 0
   face_count = 0
   processed_images = set([])
-  # t1 = time.time()
-  while calls_made < num_api_calls:
-    response = API_call(lat = lat, lng = lng, max_timestamp = max_timestamp, client_id = client_id)
-    for entry in response.data['data']:
-      if entry['type'] == 'image':
-        print entry['images']['standard_resolution']['url']
-        try:
-          img = Img(entry)
-          print img.created_time
-          if is_new_image(img.id, processed_images):
-            for possible_face, face_xywh in zip(img.faces_rois, img.faces):
-              face = Face(img.url, img.color_image, img.grayscale_image, possible_face, face_xywh)
-              if face.has_two_eyes() and face.has_one_mouth() and face.has_zero_or_one_smile():
-                  print "face_found"
-                  face_count += 1
-        except cv2.error:
-          continue    
+  conn, cursor = db_connect()
+  cursor.execute("BEGIN TRANSACTION")
+
+  for call in range(num_api_calls):
+    response = API_call(lat = api_call_lat, lng = api_call_lng, max_timestamp = max_timestamp, client_id = client_id)
+    images = [entry for entry in response.data['data'] if entry['type'] == 'image']
+    
+    for entry in images:
+      try:
+        img = Img(entry, api_call_lat, api_call_lng)
+        
+        if is_new_image(img.id, processed_images):
+          image_table_id = insert_in_image_db_and_return_id(img, cursor)
+          faces_in_img = []
+          print img.url + "\n" + img.created_time   
+  
+          for possible_face, face_xywh in zip(img.faces_rois, img.faces):
+            face = Face(img.url, img.color_image, img.grayscale_image, possible_face, face_xywh)
+            if face.has_two_eyes() and face.has_one_mouth() and face.has_zero_or_one_smile():
+                print "face_found"
+                insert_in_face_db(face, image_table_id, cursor)
+                face_count += 1
+                faces_in_img.append(face)
+     
+      except cv2.error:
+        continue    
+    
+    cursor.execute("COMMIT")
     max_timestamp = get_new_max_timestamp(max_timestamp, img.created_time)
-    print str(face_count) + " faces found through loop " + str(calls_made + 1)
-    calls_made += 1
+    print str(face_count) + " faces found through loop " + str(call + 1)
+  conn.close()
 
 def parse_cmd_args(argv):
   try:
@@ -253,9 +271,9 @@ def parse_cmd_args(argv):
     elif opt in ("-n", "--num_api_calls"):
        num_api_calls = int(arg)
     elif opt in ("-l", "--lat"):
-       lat = float(arg)
+       api_call_lat = float(arg)
     elif opt in ("-g", "--lng"):
-       lng = float(arg)
+       api_call_lng = float(arg)
     elif opt in ("-m", "--max_timestamp"):
        max_timestamp = int(arg)
     elif opt in ("-c", "--client_id"):
@@ -263,8 +281,53 @@ def parse_cmd_args(argv):
     else:
       assert False, "unhandled option"
 
-  return num_api_calls, lat, lng, max_timestamp, client_id
+  return num_api_calls, api_call_lat, api_call_lng, max_timestamp, client_id
 
+def db_connect():
+  conn = sqlite3.connect('face.db')
+  cursor = conn.cursor()
+  return conn, cursor
+
+def insert_in_image_db_and_return_id(img, cursor):
+  print img.users_in_photo
+  row = [
+    img.url, 
+    img.low_resolution_url,
+    img.thumbnail_url,
+    img.users_in_photo,
+    img.tags,
+    img.lat,
+    img.lng,
+    img.filter,
+    img.created_time,
+    img.id,
+    img.link,
+    img.username,
+    img.faces_rois, 
+    img.faces,
+    img.caption,
+    img.api_call_lat,
+    img.api_call_lng
+  ]
+  cursor.execute("INSERT INTO images VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
+  return cursor.lastrowid
+
+def insert_in_face_db(face, image_table_idcursor):
+  row = [
+    image_table_id,
+    face.face_xywh,
+    face.eyes_rois, 
+    face.eyes_xywh_relative, 
+    face.eyes_xywh_absolute,
+    face.mouth_rois, 
+    face.mouth_xywh_relative,  
+    face.mouth_xywh_absolute,
+    face.smile_rois,
+    face.smile_xywh_relative, 
+    face.smile_xywh_absolute
+  ]
+  cursor.execute("INSERT INTO faces VALUES (?,?,?,?,?,?,?,?,?,?,?)", row)
+ 
 def is_new_image(image_id, processed_images):
   # Checks if image has already been processed since instagram api sometimes 
   # does not respect max_timestamp
@@ -282,6 +345,7 @@ def get_new_max_timestamp(last_max_timestamp, current_image_timestamp):
   # where all photos have a max_timestamp greater than what was set
   new_max_timestamp = min(last_max_timestamp, current_image_timestamp)
   return new_max_timestamp - 600
+
 
 if __name__ == '__main__':
     main(sys.argv[1:])
