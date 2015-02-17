@@ -12,6 +12,7 @@ import cStringIO
 
 import time
 import sys 
+import getopt
 import sqlite3
 
 #install CV2 and point these to the local dir
@@ -27,7 +28,7 @@ class API_call():
     self.lng = lng
     self.max_timestamp = max_timestamp
     self.client_id = client_id
-    self.num_photos = 100
+    self.num_photos = 10
     self.api_endpoint =  "https://api.instagram.com/v1/media/search?lat=%s&lng=%s&max_timestamp=%s&client_id=%s&count=%s" % (self.lat, self.lng, self.max_timestamp, self.client_id, self.num_photos)
     self.response =  urllib2.urlopen(self.api_endpoint)
     self.data = json.load(self.response)
@@ -212,54 +213,63 @@ class Face():
       return True
     return False
 
-def main():
-  num_api_calls = 10
+def main(argv):
+  #explain vars
+  num_api_calls, lat, lng, max_timestamp, client_id = parse_cmd_args(argv)
   calls_made = 0
-  max_timestamp = 1423880214
+  face_count = 0
   processed_images = set([])
-  t1 = time.time()
-  faces = []
+  # t1 = time.time()
   while calls_made < num_api_calls:
-    face_count = 0
-    response = API_call(lat = 40.7359, lng =-73.9903086, max_timestamp = max_timestamp, client_id = '')
-    timestamps = []
+    response = API_call(lat = lat, lng = lng, max_timestamp = max_timestamp, client_id = client_id)
     for entry in response.data['data']:
       if entry['type'] == 'image':
-        #print entry['images']['standard_resolution']['url']
+        print entry['images']['standard_resolution']['url']
         try:
           img = Img(entry)
+          print img.created_time
           if is_new_image(img.id, processed_images):
-            timestamps.append(img.created_time)
-            #print img.created_time
-            #img.show_color_image()
             for possible_face, face_xywh in zip(img.faces_rois, img.faces):
               face = Face(img.url, img.color_image, img.grayscale_image, possible_face, face_xywh)
               if face.has_two_eyes() and face.has_one_mouth() and face.has_zero_or_one_smile():
-                  #face.show_color_image()
-                  (x1,x2,y1,y2) = face.eyes_xywh_absolute[1]
-                  print (x1,x2,y1,y2)
-                  #face.show_color_image()
-                  face_count +=1
-                  faces.append(img.color_image)
+                  print "face_found"
+                  face_count += 1
         except cv2.error:
           continue    
     max_timestamp = get_new_max_timestamp(max_timestamp, img.created_time)
-    print str(face_count) + "faces found on loop" + str(calls_made + 1)
+    print str(face_count) + " faces found through loop " + str(calls_made + 1)
     calls_made += 1
-  print timestamps
-  print len(processed_images)
-  t2 = time.time()
-  print (t2-t1)
-  print "num faces = " + str(len(faces))
-  for f in faces:
-    cv2.imshow('img',f)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-  print 'size' + str(sys.getsizeof(faces))
+
+def parse_cmd_args(argv):
+  try:
+      opts, args = getopt.getopt(argv,"hn:l:g:m:c:",["num_api_calls=", "lat=", "lng=", "max_timestamp=", "client_id="])
+  except getopt.GetoptError:
+    print 'face.py -n <num_api_calls>'
+    sys.exit(2)
+  for opt, arg in opts:
+    if opt == '-h':
+       print 'face.py "-n --num_api_calls, -l --lat, -g --lng, -m --max_timestamp, -c --client_id="'
+       sys.exit()
+    elif opt in ("-n", "--num_api_calls"):
+       num_api_calls = int(arg)
+    elif opt in ("-l", "--lat"):
+       lat = float(arg)
+    elif opt in ("-g", "--lng"):
+       lng = float(arg)
+    elif opt in ("-m", "--max_timestamp"):
+       max_timestamp = int(arg)
+    elif opt in ("-c", "--client_id"):
+       client_id = str(arg)
+    else:
+      assert False, "unhandled option"
+
+  return num_api_calls, lat, lng, max_timestamp, client_id
 
 def is_new_image(image_id, processed_images):
   # Checks if image has already been processed since instagram api sometimes 
   # does not respect max_timestamp
+  # http://stackoverflow.com/questions/23792774/instagram-api-media-search-endpoint-not-respecting-max-timestamp-parameter
+  # and http://stackoverflow.com/questions/25155620/instagram-api-media-search-max-timestamp-issue
   if image_id in processed_images:
     return False
   processed_images.add(image_id)
@@ -274,4 +284,4 @@ def get_new_max_timestamp(last_max_timestamp, current_image_timestamp):
   return new_max_timestamp - 600
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1:])
