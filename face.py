@@ -14,7 +14,6 @@ import time
 import sys 
 import getopt
 import sqlite3
-import cpickle
 
 #install CV2 and point these to the local dir
 FACE_CASECADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_frontalface_default.xml')
@@ -29,7 +28,7 @@ class API_call():
     self.lng = lng
     self.max_timestamp = max_timestamp
     self.client_id = client_id
-    self.num_photos = 10
+    self.num_photos = 50
     self.api_endpoint =  "https://api.instagram.com/v1/media/search?lat=%s&lng=%s&max_timestamp=%s&client_id=%s&count=%s" % (self.lat, self.lng, self.max_timestamp, self.client_id, self.num_photos)
     self.response =  urllib2.urlopen(self.api_endpoint)
     self.data = json.load(self.response)
@@ -45,7 +44,7 @@ class Img():
     if entry['users_in_photo'] != []:
       self.users_in_photo = entry['users_in_photo']
     else: 
-      self.users_in_photo = ['']
+      self.users_in_photo = None
     self.tags = entry['tags']
     self.lat = entry['location']['latitude']
     self.lng = entry['location']['longitude']
@@ -222,45 +221,47 @@ class Face():
 
 def main(argv):
   #explain vars/this whole thing
-  num_api_calls, api_call_lat, api_call_lng, max_timestamp, client_id = parse_cmd_args(argv)
+  num_api_calls, api_call_lat, api_call_lng, max_timestamp, min_timestamp, client_id = parse_cmd_args(argv)
   calls_made = 0
   face_count = 0
-  processed_images = set([])
+  t1 = time.time()
   conn, cursor = db_connect()
-  cursor.execute("BEGIN TRANSACTION")
-
-  for call in range(num_api_calls):
+  already_in_db = cursor.execute("SELECT instagram_id from images").fetchall()
+  processed_images = set([str(x[0]) for x in already_in_db])
+  
+  #for call in range(num_api_calls):
+  while max_timestamp > min_timestamp:
     response = API_call(lat = api_call_lat, lng = api_call_lng, max_timestamp = max_timestamp, client_id = client_id)
     images = [entry for entry in response.data['data'] if entry['type'] == 'image']
-    
     for entry in images:
       try:
         img = Img(entry, api_call_lat, api_call_lng)
         
         if is_new_image(img.id, processed_images):
-          image_table_id = insert_in_image_db_and_return_id(img, cursor)
-          faces_in_img = []
           print img.url + "\n" + img.created_time   
+          image_table_id = insert_in_image_db_and_return_id(img, cursor)
   
           for possible_face, face_xywh in zip(img.faces_rois, img.faces):
             face = Face(img.url, img.color_image, img.grayscale_image, possible_face, face_xywh)
             if face.has_two_eyes() and face.has_one_mouth() and face.has_zero_or_one_smile():
                 print "face_found"
-                insert_in_face_db(face, image_table_id, cursor)
+                insert_in_face_db(face, image_table_id, img.url, cursor)
                 face_count += 1
-                faces_in_img.append(face)
-     
+                face.show_color_image()
       except cv2.error:
-        continue    
-    
-    cursor.execute("COMMIT")
+        continue 
+
+    conn.commit()  
+    print "commited to db"
     max_timestamp = get_new_max_timestamp(max_timestamp, img.created_time)
-    print str(face_count) + " faces found through loop " + str(call + 1)
+    calls_made += 1
+    print str(face_count) + " faces found through loop " + str(calls_made)
   conn.close()
+  print 'time taken is ' + str(time.time() - t1)
 
 def parse_cmd_args(argv):
   try:
-      opts, args = getopt.getopt(argv,"hn:l:g:m:c:",["num_api_calls=", "lat=", "lng=", "max_timestamp=", "client_id="])
+      opts, args = getopt.getopt(argv,"hn:l:g:m:t:c:",["num_api_calls=", "lat=", "lng=", "max_timestamp=", "min_timestamp=", "client_id="])
   except getopt.GetoptError:
     print 'face.py -n <num_api_calls>'
     sys.exit(2)
@@ -276,12 +277,14 @@ def parse_cmd_args(argv):
        api_call_lng = float(arg)
     elif opt in ("-m", "--max_timestamp"):
        max_timestamp = int(arg)
+    elif opt in ("-t", "--min_timestamp"):
+       min_timestamp = int(arg)
     elif opt in ("-c", "--client_id"):
        client_id = str(arg)
     else:
       assert False, "unhandled option"
 
-  return num_api_calls, api_call_lat, api_call_lng, max_timestamp, client_id
+  return num_api_calls, api_call_lat, api_call_lng, max_timestamp, min_timestamp, client_id
 
 def db_connect():
   conn = sqlite3.connect('face.db')
@@ -289,13 +292,20 @@ def db_connect():
   return conn, cursor
 
 def insert_in_image_db_and_return_id(img, cursor):
-  print img.users_in_photo
+  # Insert the attributes into the db
+  # Vars like img.faces have to have some conversion because cv2 haar cascades
+  # return either numpy.ndarray or a empty ().  So we convert ()) to a list
+  # so they all have the same datatype. 
+  if img.faces != ():
+    faces_for_db = img.faces.tolist()
+  else: 
+    faces_for_db = []
   row = [
     img.url, 
     img.low_resolution_url,
     img.thumbnail_url,
-    img.users_in_photo,
-    img.tags,
+    json.dumps(img.users_in_photo),
+    json.dumps(img.tags),
     img.lat,
     img.lng,
     img.filter,
@@ -303,30 +313,42 @@ def insert_in_image_db_and_return_id(img, cursor):
     img.id,
     img.link,
     img.username,
-    img.faces_rois, 
-    img.faces,
+    json.dumps(faces_for_db),
     img.caption,
     img.api_call_lat,
     img.api_call_lng
   ]
-  cursor.execute("INSERT INTO images VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
+  cursor.execute("INSERT INTO images VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
   return cursor.lastrowid
 
-def insert_in_face_db(face, image_table_idcursor):
+def insert_in_face_db(face, image_table_id, url, cursor):
+  # Insert the attributes into the db
+  # variables with relative are numpy arrays
+  # variables with abosulte are a python array.  
+  # absolute varialbes sshould not need conversion but was failing 
+  # with error TypeError: 351 is not JSON serializable.  
+  # It works in terminal.  However it works in terminal. So we convert the 
+  # list to a numpy array and then back to a list. Hackey workaround for now.
+
+  eyes_xywh_absolute = np.asarray(face.eyes_xywh_absolute)
+  mouth_xywh_absolute = np.asarray(face.mouth_xywh_absolute)
+  smile_xywh_absolute = np.asarray(face.smile_xywh_absolute)
+  if face.smile_xywh_relative != ():
+    smile_xywh_relative = face.smile_xywh_relative.tolist()
+  else: 
+    smile_xywh_relative = []
   row = [
     image_table_id,
-    face.face_xywh,
-    face.eyes_rois, 
-    face.eyes_xywh_relative, 
-    face.eyes_xywh_absolute,
-    face.mouth_rois, 
-    face.mouth_xywh_relative,  
-    face.mouth_xywh_absolute,
-    face.smile_rois,
-    face.smile_xywh_relative, 
-    face.smile_xywh_absolute
+    url,
+    json.dumps(face.face_xywh.tolist()),
+    json.dumps(face.eyes_xywh_relative.tolist()), 
+    json.dumps(eyes_xywh_absolute.tolist()),
+    json.dumps(face.mouth_xywh_relative.tolist()),  
+    json.dumps(mouth_xywh_absolute.tolist()),
+    json.dumps(smile_xywh_relative), 
+    json.dumps(smile_xywh_absolute.tolist())
   ]
-  cursor.execute("INSERT INTO faces VALUES (?,?,?,?,?,?,?,?,?,?,?)", row)
+  cursor.execute("INSERT INTO faces VALUES (?,?,?,?,?,?,?,?,?)", row)
  
 def is_new_image(image_id, processed_images):
   # Checks if image has already been processed since instagram api sometimes 
@@ -334,6 +356,7 @@ def is_new_image(image_id, processed_images):
   # http://stackoverflow.com/questions/23792774/instagram-api-media-search-endpoint-not-respecting-max-timestamp-parameter
   # and http://stackoverflow.com/questions/25155620/instagram-api-media-search-max-timestamp-issue
   if image_id in processed_images:
+    print 'seen image_id %s before, skipping it' % image_id
     return False
   processed_images.add(image_id)
   return True

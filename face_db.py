@@ -7,17 +7,16 @@ c.execute('''CREATE TABLE images(
 	url TEXT, 
   low_resolution_url TEXT,
   thumbnail_url TEXT,
-  users_in_photo BLOB,
+  users_in_photo TEXT,
   tags TEXT,
   lat REAL,
   lng REAL,
   filter TEXT,
-  created_time REAL,
+  created_time TEXT,
   instagram_id TEXT,
   link TEXT,
   username TEXT,
-  faces_rois BLOB,
-  faces BLOB,
+  faces TEXT,
   caption TEXT,
 	api_call_lat REAL,
 	api_call_lng REAL
@@ -27,16 +26,14 @@ conn.commit()
 
 c.execute('''CREATE TABLE faces(
   image_table_id INT,
-  face_xywh BLOB, 
-  eyes_rois BLOB, 
-  eyes_xywh_relative BLOB, 
-  eyes_xywh_absolute BLOB,
-  mouth_rois BLOB, 
-  mouth_xywh_relative BLOB,  
-  mouth_xywh_absolute BLOB,
-  smile_rois BLOB,
-  smile_xywh_relative BLOB, 
-  smile_xywh_absolute BLOB
+  url TEXT,
+  face_xywh TEXT, 
+  eyes_xywh_relative TEXT, 
+  eyes_xywh_absolute TEXT,
+  mouth_xywh_relative TEXT,  
+  mouth_xywh_absolute TEXT,
+  smile_xywh_relative TEXT, 
+  smile_xywh_absolute TEXT
   )''')
 
 conn.commit()
