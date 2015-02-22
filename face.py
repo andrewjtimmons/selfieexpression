@@ -11,7 +11,6 @@ python face.py -l 40.7359 -g -73.9903086 -m 1424235599 -t 1424149199 -c [YOUR_CL
 import numpy as np
 import pandas as pd
 import cv2
-from sklearn import datasets
 import os
 
 import json
@@ -317,7 +316,6 @@ def main(argv):
         img = Img(entry, api_call_lat, api_call_lng)
         
         if is_new_image(img.id, processed_images):
-          save_image_to_disk(img)
           print img.url + "\n" + img.created_time   
           image_table_id = insert_in_image_db_and_return_id(img, cursor)
   
@@ -329,6 +327,7 @@ def main(argv):
                 face_count += 1
           conn.commit()  
           print "commited to db"
+          save_image_to_disk(img)
 
       except cv2.error:
         continue 
@@ -466,6 +465,7 @@ def is_new_image(image_id, processed_images):
 def save_image_to_disk(img):
   """Save image to local storage. """
   cv2.imwrite("images/" + img.id + ".jpg",img.color_image)
+  cv2.imwrite("grayscale_images/" + img.id + ".jpg", img.grayscale_image)
 
 def get_new_max_timestamp(last_max_timestamp, current_image_timestamp):
   """ Gives the smaller of the last max timestamp vs the last image's timestamp.  
