@@ -4,8 +4,16 @@
 3.  Store the metadata in sqlite3
 
 Example call from command line is:
-python face.py -l 40.7359 -g -73.9903086 -m 1424235599 -t 1424149199 -c [YOUR_CLIENT_ID]
+python face.py -l 40.7359 -g -73.9903086 -m [CURRENT TIMESTAMP] -t [TIME STAMP OF HOW FAR BACK YOU WANT TO GO] -c [YOUR_CLIENT_ID]
 
+Currently it will pull 10 images for each ten minute block between -m and -t.
+You can play with those settings by changing:
+self.num_photos = 10
+in the API_call() class
+or 
+changing the 600 seconds to something else in:
+return new_max_timestamp - 600
+in the def get_new_max_timestamp
 """
 
 import numpy as np
@@ -25,11 +33,11 @@ import sqlite3
 
 from socket import error as SocketError
 
-# for the casecades to work you need install CV2 and point these to your local dir
-FACE_CASECADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_frontalface_default.xml')
-EYE_CASECADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_eye.xml')
-MOUTH_CASECADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_mcs_mouth.xml')
-SMILE_CASECADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_smile.xml')
+# for the cascades to work you need install CV2 and point these to your local dir
+FACE_CASCADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_frontalface_default.xml')
+EYE_CASCADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_eye.xml')
+MOUTH_CASCADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_mcs_mouth.xml')
+SMILE_CASCADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_smile.xml')
 
 class API_call():
   """ Makes api calls to instragram's media search endpoint"""
@@ -68,7 +76,7 @@ class Img():
   self.color_image: actual color image represented in numpy array
   self.grayscale_image: actual color image represented in numpy array
   self.faces_rois:  numpy array of grayscale image that might be a face
-  self.faces: collection of four points that bound a potential face in a box that is generated from the haar casecade.
+  self.faces: collection of four points that bound a potential face in a box that is generated from the haar cascade.
   self.num_faces: len(self.faces_rois)
   self.caption: caption on photo by user
   self.api_call_lat: the latitude of where the api call was centered
@@ -114,7 +122,7 @@ class Img():
 
   def _detect_faces(self):
     """ Detect faces in the image.  Returns an empty list if no faces. """
-    faces = FACE_CASECADE.detectMultiScale(self.grayscale_image, scaleFactor = 1.05, minNeighbors = 3)
+    faces = FACE_CASCADE.detectMultiScale(self.grayscale_image, scaleFactor = 1.05, minNeighbors = 3)
     faces_rois = []
     for (x,y,w,h) in faces:
       self._draw_rectangle(self.color_image, (x,y), (x+w,y+h), (255,0,0))
@@ -153,7 +161,7 @@ class Face():
   color_image: the color image from the url
   grayscale_image: the grayscale image from the url
   face_roi: numpy array of grayscale image that might be a face
-  face_xywh: the four points that bound a this specific potential face in a box that is generated from the haar casecade.  Comes from self.faces in Img class. 
+  face_xywh: the four points that bound a this specific potential face in a box that is generated from the haar cascade.  Comes from self.faces in Img class. 
 
   Class variables:
   self.eyes_rois: numpy array of grayscale image that might be eyes
@@ -183,7 +191,7 @@ class Face():
   def _detect_eyes(self):
     """ Detect eyes in the image.  Returns an empty list if no eyes. """
 
-    eyes_xywh_relative = EYE_CASECADE.detectMultiScale(self.face_roi, scaleFactor = 1.05, minNeighbors = 3)
+    eyes_xywh_relative = EYE_CASCADE.detectMultiScale(self.face_roi, scaleFactor = 1.05, minNeighbors = 3)
     eyes_rois = []
     eyes_xywh_absolute = []
     for x, y, w, h in eyes_xywh_relative:
@@ -195,7 +203,7 @@ class Face():
   
   def _create_roi_below_eyes(self):
     """ Takes the face roi and limits it to the region below the eyes.  This will let
-    the mouth casecades just search in that region instead of looking at the whole face.
+    the mouth cascades just search in that region instead of looking at the whole face.
     Get x,y coords with width and height. """
     x_face, y_face, w_face, h_face = self.face_xywh
     y_eyes = y_face + self.eyes_xywh_relative[0][1] + int(self.eyes_xywh_relative[0][3]*1.5)
@@ -206,26 +214,24 @@ class Face():
 
   def _detect_mouths(self):
     """ Detect mouth in the image.  Returns an empty list if no mouth. """
-    mouth_xywh_relative = MOUTH_CASECADE.detectMultiScale(self.roi_gray_below_eyes, scaleFactor = 1.05, minNeighbors = 3)
+    mouth_xywh_relative = MOUTH_CASCADE.detectMultiScale(self.roi_gray_below_eyes, scaleFactor = 1.05, minNeighbors = 3)
     mouth_rois = []
     mouth_xywh_absolute = []
     for x,y,w,h in mouth_xywh_relative:
       self._draw_rectangle(self.roi_color_below_eyes, (x,y), (x+w,y+h), (0,0,0))
       x1, x2, y1, y2 = self._mouth_math(x,y,w,h)
-      self._draw_rectangle(self.color_image, (x1,y1), (x2,y2), (255,255,0), thickness = 1)
       mouth_rois.append(self.color_image[y1:y2, x1:x2])
       mouth_xywh_absolute.append([x1, x2, y1, y2])
     return mouth_rois, mouth_xywh_relative, mouth_xywh_absolute
 
   def _detect_smiles(self):
     """ Detect smile in the image.  Returns an empty list if no mouth. """
-    smile_xywh_relative = SMILE_CASECADE.detectMultiScale(self.roi_gray_below_eyes, scaleFactor = 1.05, minNeighbors = 3)
+    smile_xywh_relative = SMILE_CASCADE.detectMultiScale(self.roi_gray_below_eyes, scaleFactor = 1.05, minNeighbors = 3)
     smile_rois = []
     smile_xywh_absolute = []
-    for x , y, w, h in smile_xywh_relative:
+    for x, y, w, h in smile_xywh_relative:
       self._draw_rectangle(self.roi_color_below_eyes, (x,y), (x+w,y+h), (255,255,255))
       x1, x2, y1, y2 = self._mouth_math(x,y,w,h)
-      self._draw_rectangle(self.color_image, (x1,y1), (x2,y2), (255,255,0), thickness = 1)
       smile_rois.append(self.color_image[y1:y2, x1:x2])
       smile_xywh_absolute.append([x1, x2, y1, y2])
     return smile_rois, smile_xywh_relative, smile_xywh_absolute
