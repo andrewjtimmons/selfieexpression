@@ -3,7 +3,6 @@ Creates a window with a slider that lets you add how many faces there are
 To use this need to add a column to the images table called faces_actual type INT.
 """
 
-#TODO remove unused/lint code
 import numpy as np
 import pandas as pd
 import cv2
@@ -66,10 +65,6 @@ def main():
   conn.close()
   if failed_images:
   	print 'failed on these: %s' % failed_images
-
-def onChange(val):
-	#required for getTrackbarPos call, but not for this program.
-	pass
 
 def db_connect():
   conn = sqlite3.connect('face.db')

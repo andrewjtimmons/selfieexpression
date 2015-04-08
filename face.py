@@ -33,7 +33,7 @@ import sqlite3
 
 from socket import error as SocketError
 
-# for the cascades to work you need install CV2 and point these to your local dir
+# for the cascades to work you need install CV2 and point these to your local dir.  Install cv2 by finding the right instructions for your computer's os http://docs.opencv.org/doc/tutorials/introduction/table_of_content_introduction/table_of_content_introduction.html
 FACE_CASCADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_frontalface_default.xml')
 EYE_CASCADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_eye.xml')
 MOUTH_CASCADE = cv2.CascadeClassifier('/Users/andrewjtimmons/anaconda/share/OpenCV/haarcascades/haarcascade_mcs_mouth.xml')
@@ -314,7 +314,6 @@ def main(argv):
   already_in_db = cursor.execute("SELECT instagram_id from images").fetchall()
   processed_images = set([str(x[0]) for x in already_in_db])
   socket_error_ids = []
-  #for call in range(num_api_calls):
   while max_timestamp > min_timestamp:
     images = get_image_entries_from_api(api_call_lat, api_call_lng, max_timestamp, client_id)
     for entry in images:
